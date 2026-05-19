@@ -3,11 +3,11 @@ import { z } from "zod";
 import { confirmOfflineActivation } from "@/lib/activation/service";
 
 const bodySchema = z.object({
+  appId: z.string().min(1),
   invoiceNumber: z.string().min(1),
   deviceCode: z.string().min(1),
 });
 
-/** Opsional: dipanggil klien setelah verifikasi kode offline lokal agar histori tersinkron. */
 export async function POST(request: NextRequest) {
   try {
     const json = await request.json();
@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await confirmOfflineActivation(
+      parsed.data.appId,
       parsed.data.invoiceNumber,
       parsed.data.deviceCode,
     );
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
 
     return Response.json({
       ok: true,
+      appId: result.productId,
       invoiceNumber: result.invoiceNumber,
       deviceCode: result.deviceCode,
       activatedAt: Date.now(),

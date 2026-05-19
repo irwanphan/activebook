@@ -5,26 +5,56 @@ import { z } from "zod";
 import { normalizeInvoice } from "@/lib/activation/normalize";
 import { assertAdmin } from "@/lib/auth/admin";
 import { getDb } from "@/lib/db";
-import { permittedInvoices } from "@/lib/db/schema";
+import { permittedInvoiceProducts, permittedInvoices } from "@/lib/db/schema";
+import { getProductName, normalizeProductId } from "@/lib/products";
 
 export async function GET(request: NextRequest) {
   const denied = assertAdmin(request);
   if (denied) return denied;
 
+  const productFilter = request.nextUrl.searchParams.get("appId");
+
   const db = await getDb();
-  const rows = await db
+  const invoices = await db
     .select()
     .from(permittedInvoices)
     .orderBy(desc(permittedInvoices.createdAt));
 
-  return Response.json({ items: rows });
+  const products = await db.select().from(permittedInvoiceProducts);
+
+  const items = invoices.map((inv) => {
+    const invProducts = products
+      .filter((p) => p.invoiceId === inv.id)
+      .map((p) => ({
+        productId: p.productId,
+        productName: getProductName(p.productId),
+        maxActivationsPerDevice: p.maxActivationsPerDevice,
+        maxDevices: p.maxDevices,
+      }));
+    return {
+      ...inv,
+      products: invProducts,
+    };
+  });
+
+  const filtered =
+    productFilter && normalizeProductId(productFilter)
+      ? items.filter((i) => i.products.some((p) => p.productId === productFilter))
+      : items;
+
+  return Response.json({ items: filtered });
 }
+
+const productLineSchema = z.object({
+  productId: z.string().min(1),
+  maxActivationsPerDevice: z.number().int().min(1).default(1),
+  maxDevices: z.number().int().min(1).default(1),
+});
 
 const postSchema = z.object({
   invoiceNumber: z.string().min(1),
-  maxActivationsPerDevice: z.number().int().min(1).default(1),
-  maxDevices: z.number().int().min(1).default(1),
   notes: z.string().optional(),
+  products: z.array(productLineSchema).min(1),
 });
 
 export async function POST(request: NextRequest) {
@@ -40,15 +70,29 @@ export async function POST(request: NextRequest) {
 
     const invoiceNumber = normalizeInvoice(parsed.data.invoiceNumber);
     const db = await getDb();
+
+    const invoiceId = uuid();
     await db.insert(permittedInvoices).values({
-      id: uuid(),
+      id: invoiceId,
       invoiceNumber,
-      maxActivationsPerDevice: parsed.data.maxActivationsPerDevice,
-      maxDevices: parsed.data.maxDevices,
       notes: parsed.data.notes ?? null,
       active: 1,
       createdAt: Date.now(),
     });
+
+    for (const line of parsed.data.products) {
+      const productId = normalizeProductId(line.productId);
+      if (!productId) {
+        return Response.json({ error: `Produk tidak valid: ${line.productId}` }, { status: 400 });
+      }
+      await db.insert(permittedInvoiceProducts).values({
+        id: uuid(),
+        invoiceId,
+        productId,
+        maxActivationsPerDevice: line.maxActivationsPerDevice,
+        maxDevices: line.maxDevices,
+      });
+    }
 
     return Response.json({ ok: true, invoiceNumber });
   } catch (err) {
@@ -63,8 +107,6 @@ export async function POST(request: NextRequest) {
 const patchSchema = z.object({
   invoiceNumber: z.string().min(1),
   active: z.boolean().optional(),
-  maxActivationsPerDevice: z.number().int().min(1).optional(),
-  maxDevices: z.number().int().min(1).optional(),
   notes: z.string().optional(),
 });
 
@@ -82,10 +124,6 @@ export async function PATCH(request: NextRequest) {
   const db = await getDb();
   const patch: Partial<typeof permittedInvoices.$inferInsert> = {};
   if (parsed.data.active !== undefined) patch.active = parsed.data.active ? 1 : 0;
-  if (parsed.data.maxActivationsPerDevice !== undefined) {
-    patch.maxActivationsPerDevice = parsed.data.maxActivationsPerDevice;
-  }
-  if (parsed.data.maxDevices !== undefined) patch.maxDevices = parsed.data.maxDevices;
   if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
 
   await db

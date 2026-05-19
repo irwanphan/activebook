@@ -1,12 +1,18 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/Card";
+
+type Product = { id: string; name: string };
 
 const inputClass =
   "mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
 
 export function RequestForm() {
+  const searchParams = useSearchParams();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [appId, setAppId] = useState("easybook-erp");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [deviceCode, setDeviceCode] = useState("");
   const [contactName, setContactName] = useState("");
@@ -18,6 +24,14 @@ export function RequestForm() {
 
   const whatsappUrl = process.env.NEXT_PUBLIC_WHATSAPP_URL;
 
+  useEffect(() => {
+    const fromUrl = searchParams.get("appId");
+    if (fromUrl) setAppId(fromUrl);
+    void fetch("/api/products")
+      .then((r) => r.json())
+      .then((j: { items: Product[] }) => setProducts(j.items));
+  }, [searchParams]);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -28,6 +42,7 @@ export function RequestForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          appId,
           invoiceNumber,
           deviceCode,
           contactName,
@@ -53,8 +68,9 @@ export function RequestForm() {
     }
   }
 
+  const productName = products.find((p) => p.id === appId)?.name ?? appId;
   const waText = encodeURIComponent(
-    `Halo, saya ingin aktivasi offline EasyBook.\nInvoice: ${invoiceNumber}\nKode perangkat: ${deviceCode}`,
+    `Halo, saya ingin aktivasi offline ${productName}.\nProduk: ${appId}\nInvoice: ${invoiceNumber}\nKode perangkat: ${deviceCode}`,
   );
   const waHref = whatsappUrl
     ? `${whatsappUrl}${whatsappUrl.includes("?") ? "&" : "?"}text=${waText}`
@@ -65,11 +81,26 @@ export function RequestForm() {
       <Card>
         <h1 className="text-xl font-semibold text-zinc-900">Permintaan aktivasi offline</h1>
         <p className="mt-2 text-sm text-zinc-600">
-          Isi formulir ini jika perangkat Anda tidak terhubung internet. Reseller/CS akan
-          mengirimkan kode aktivasi.
+          Isi formulir untuk <strong>{productName}</strong>. Reseller/CS akan mengirimkan kode
+          aktivasi.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          <div>
+            <label className="text-sm font-medium text-zinc-700">Aplikasi *</label>
+            <select
+              className={inputClass}
+              value={appId}
+              onChange={(e) => setAppId(e.target.value)}
+              required
+            >
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="text-sm font-medium text-zinc-700">Nomor invoice *</label>
             <input
@@ -85,12 +116,9 @@ export function RequestForm() {
               className={inputClass}
               value={deviceCode}
               onChange={(e) => setDeviceCode(e.target.value)}
-              placeholder="EB-DEV-… dari aplikasi EasyBook"
+              placeholder="EB-DEV-… dari aplikasi"
               required
             />
-            <p className="mt-1 text-xs text-zinc-500">
-              Buka EasyBook → menu Aktivasi untuk melihat kode perangkat.
-            </p>
           </div>
           <div>
             <label className="text-sm font-medium text-zinc-700">Nama kontak</label>

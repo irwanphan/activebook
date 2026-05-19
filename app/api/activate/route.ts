@@ -3,6 +3,7 @@ import { z } from "zod";
 import { activateOnline } from "@/lib/activation/service";
 
 const bodySchema = z.object({
+  appId: z.string().min(1),
   invoiceNumber: z.string().min(1),
   deviceCode: z.string().min(1),
 });
@@ -19,6 +20,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await activateOnline(
+      parsed.data.appId,
       parsed.data.invoiceNumber,
       parsed.data.deviceCode,
     );
@@ -32,6 +34,7 @@ export async function POST(request: NextRequest) {
 
     return Response.json({
       ok: true,
+      appId: result.productId,
       invoiceNumber: result.invoiceNumber,
       deviceCode: result.deviceCode,
       activatedAt: Date.now(),

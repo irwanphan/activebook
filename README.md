@@ -4,8 +4,10 @@ Middleware aktivasi lisensi untuk aplikasi **EasyBook** (Tauri). Dapat di-deploy
 
 ## Fitur
 
-- Aktivasi online: `POST /api/activate` (invoice + kode perangkat)
-- Batas per invoice: max aktivasi per perangkat & max perangkat berbeda
+- **Multi-produk:** `easybook-erp`, `easybook-crm` (dan bisa ditambah di `lib/products.ts`)
+- Aktivasi online: `POST /api/activate` dengan `appId`, `invoiceNumber`, `deviceCode`
+- Batas per invoice **per produk**: max aktivasi per perangkat & max perangkat berbeda
+- Bundle: satu invoice bisa mengizinkan beberapa produk sekaligus
 - Histori aktivasi
 - Kode aktivasi offline (Ed25519) untuk user tanpa internet
 - Form permintaan aktivasi (`/request`) + panel admin (`/admin`)
@@ -31,10 +33,11 @@ bun dev
 
 | Endpoint | Auth | Deskripsi |
 |----------|------|-----------|
-| `POST /api/activate` | - | Aktivasi online |
-| `POST /api/activate/offline/confirm` | - | Sinkron histori setelah aktivasi offline di klien |
-| `POST /api/request` | - | Form permintaan offline |
-| `GET/POST /api/admin/*` | `x-admin-key` | Kelola invoice & generate kode |
+| `GET /api/products` | - | Daftar produk |
+| `POST /api/activate` | - | Aktivasi online (`appId` wajib) |
+| `POST /api/activate/offline/confirm` | - | Sinkron histori setelah aktivasi offline |
+| `POST /api/request` | - | Form permintaan offline (`appId` wajib) |
+| `GET/POST /api/admin/*` | `x-admin-key` | Kelola invoice & generate kode per produk |
 
 ## Kode perangkat (EasyBook)
 

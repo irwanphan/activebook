@@ -3,18 +3,28 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Card } from "@/components/ui/Card";
 
+type Product = { id: string; code: string; name: string };
+
+type InvoiceProduct = {
+  productId: string;
+  productName: string;
+  maxActivationsPerDevice: number;
+  maxDevices: number;
+};
+
 type PermittedInvoice = {
   id: string;
   invoiceNumber: string;
-  maxActivationsPerDevice: number;
-  maxDevices: number;
   notes: string | null;
   active: number;
   createdAt: number;
+  products: InvoiceProduct[];
 };
 
 type HistoryRow = {
   id: string;
+  productId: string;
+  productName: string;
   invoiceNumber: string;
   deviceCode: string;
   method: string;
@@ -29,15 +39,22 @@ const inputClass =
 export function AdminPanel() {
   const [adminKey, setAdminKey] = useState("");
   const [storedKey, setStoredKey] = useState<string | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [filterAppId, setFilterAppId] = useState<string>("");
   const [invoices, setInvoices] = useState<PermittedInvoice[]>([]);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const [newInvoice, setNewInvoice] = useState("");
+  const [selectedProducts, setSelectedProducts] = useState<Record<string, boolean>>({
+    "easybook-erp": true,
+    "easybook-crm": false,
+  });
   const [maxPerDevice, setMaxPerDevice] = useState(1);
   const [maxDevices, setMaxDevices] = useState(1);
 
+  const [offlineAppId, setOfflineAppId] = useState("easybook-erp");
   const [offlineInvoice, setOfflineInvoice] = useState("");
   const [offlineDevice, setOfflineDevice] = useState("");
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
@@ -47,12 +64,23 @@ export function AdminPanel() {
     [storedKey],
   );
 
+  const loadProducts = useCallback(async () => {
+    const res = await fetch("/api/products");
+    if (res.ok) {
+      const json = (await res.json()) as { items: Product[] };
+      setProducts(json.items);
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
     if (!storedKey) return;
     setError(null);
+    const q = filterAppId ? `?appId=${encodeURIComponent(filterAppId)}` : "";
     const [invRes, histRes] = await Promise.all([
-      fetch("/api/admin/permitted-invoices", { headers: headers() }),
-      fetch("/api/admin/activation-history?limit=50", { headers: headers() }),
+      fetch(`/api/admin/permitted-invoices${q}`, { headers: headers() }),
+      fetch(`/api/admin/activation-history?limit=50${filterAppId ? `&appId=${filterAppId}` : ""}`, {
+        headers: headers(),
+      }),
     ]);
     if (!invRes.ok || !histRes.ok) {
       setError("Gagal memuat data. Periksa kunci admin.");
@@ -62,12 +90,13 @@ export function AdminPanel() {
     const histJson = (await histRes.json()) as { items: HistoryRow[] };
     setInvoices(invJson.items);
     setHistory(histJson.items);
-  }, [storedKey, headers]);
+  }, [storedKey, headers, filterAppId]);
 
   useEffect(() => {
     const saved = window.sessionStorage.getItem("activebook_admin_key");
     if (saved) setStoredKey(saved);
-  }, []);
+    void loadProducts();
+  }, [loadProducts]);
 
   useEffect(() => {
     if (storedKey) void loadData();
@@ -79,17 +108,34 @@ export function AdminPanel() {
     setStoredKey(adminKey.trim());
   }
 
+  function toggleProduct(productId: string) {
+    setSelectedProducts((prev) => ({ ...prev, [productId]: !prev[productId] }));
+  }
+
   async function handleAddInvoice(e: FormEvent) {
     e.preventDefault();
     setMessage(null);
     setError(null);
+
+    const productLines = Object.entries(selectedProducts)
+      .filter(([, on]) => on)
+      .map(([productId]) => ({
+        productId,
+        maxActivationsPerDevice: maxPerDevice,
+        maxDevices,
+      }));
+
+    if (productLines.length === 0) {
+      setError("Pilih minimal satu produk.");
+      return;
+    }
+
     const res = await fetch("/api/admin/permitted-invoices", {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({
         invoiceNumber: newInvoice,
-        maxActivationsPerDevice: maxPerDevice,
-        maxDevices,
+        products: productLines,
       }),
     });
     const json = (await res.json()) as { error?: string };
@@ -110,6 +156,7 @@ export function AdminPanel() {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({
+        appId: offlineAppId,
         invoiceNumber: offlineInvoice,
         deviceCode: offlineDevice,
       }),
@@ -117,6 +164,7 @@ export function AdminPanel() {
     const json = (await res.json()) as {
       ok?: boolean;
       activationCode?: string;
+      appId?: string;
       message?: string;
       error?: string;
     };
@@ -125,13 +173,13 @@ export function AdminPanel() {
       return;
     }
     setGeneratedCode(json.activationCode ?? null);
-    setMessage("Kode aktivasi offline berhasil dibuat.");
+    setMessage(`Kode offline untuk ${json.appId ?? offlineAppId} berhasil dibuat.`);
     await loadData();
   }
 
   if (!storedKey) {
     return (
-      <Card className="max-w-md mx-auto mt-16">
+      <Card className="mx-auto mt-16 max-w-md">
         <h1 className="text-xl font-semibold text-zinc-900">Admin Aktivasi</h1>
         <p className="mt-2 text-sm text-zinc-600">Masukkan kunci admin API.</p>
         <form onSubmit={handleLogin} className="mt-6 space-y-4">
@@ -160,7 +208,9 @@ export function AdminPanel() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900">EasyBook Activebook</h1>
-          <p className="text-sm text-zinc-600">Kelola invoice, histori, dan kode aktivasi offline.</p>
+          <p className="text-sm text-zinc-600">
+            Middleware aktivasi multi-produk (ERP, CRM, …).
+          </p>
         </div>
         <button
           type="button"
@@ -173,6 +223,24 @@ export function AdminPanel() {
           Keluar
         </button>
       </header>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="text-sm font-medium text-zinc-700">Filter produk</label>
+          <select
+            className={inputClass}
+            value={filterAppId}
+            onChange={(e) => setFilterAppId(e.target.value)}
+          >
+            <option value="">Semua produk</option>
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
       {message && (
@@ -191,6 +259,22 @@ export function AdminPanel() {
                 onChange={(e) => setNewInvoice(e.target.value)}
                 required
               />
+            </div>
+            <div>
+              <p className="text-sm font-medium">Produk yang diizinkan</p>
+              <div className="mt-2 space-y-2">
+                {products.map((p) => (
+                  <label key={p.id} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedProducts[p.id] ?? false}
+                      onChange={() => toggleProduct(p.id)}
+                    />
+                    {p.name}
+                    <span className="font-mono text-xs text-zinc-400">({p.id})</span>
+                  </label>
+                ))}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -226,6 +310,21 @@ export function AdminPanel() {
         <Card>
           <h2 className="font-semibold text-zinc-900">Generate kode offline</h2>
           <form onSubmit={handleGenerateOffline} className="mt-4 space-y-3">
+            <div>
+              <label className="text-sm font-medium">Produk</label>
+              <select
+                className={inputClass}
+                value={offlineAppId}
+                onChange={(e) => setOfflineAppId(e.target.value)}
+                required
+              >
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="text-sm font-medium">Invoice</label>
               <input
@@ -267,17 +366,27 @@ export function AdminPanel() {
             <thead>
               <tr className="border-b text-zinc-500">
                 <th className="py-2 pr-4">Invoice</th>
-                <th className="py-2 pr-4">Max/device</th>
-                <th className="py-2 pr-4">Max devices</th>
+                <th className="py-2 pr-4">Produk</th>
                 <th className="py-2">Aktif</th>
               </tr>
             </thead>
             <tbody>
               {invoices.map((row) => (
-                <tr key={row.id} className="border-b border-zinc-100">
+                <tr key={row.id} className="border-b border-zinc-100 align-top">
                   <td className="py-2 pr-4 font-mono">{row.invoiceNumber}</td>
-                  <td className="py-2 pr-4">{row.maxActivationsPerDevice}</td>
-                  <td className="py-2 pr-4">{row.maxDevices}</td>
+                  <td className="py-2 pr-4">
+                    <ul className="space-y-1">
+                      {row.products.map((p) => (
+                        <li key={p.productId} className="text-xs">
+                          <span className="font-medium">{p.productName}</span>
+                          <span className="text-zinc-500">
+                            {" "}
+                            — {p.maxActivationsPerDevice}/device, {p.maxDevices} devices
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
                   <td className="py-2">{row.active ? "Ya" : "Tidak"}</td>
                 </tr>
               ))}
@@ -293,6 +402,7 @@ export function AdminPanel() {
             <thead>
               <tr className="border-b text-zinc-500">
                 <th className="py-2 pr-3">Waktu</th>
+                <th className="py-2 pr-3">Produk</th>
                 <th className="py-2 pr-3">Invoice</th>
                 <th className="py-2 pr-3">Device</th>
                 <th className="py-2 pr-3">Metode</th>
@@ -305,6 +415,7 @@ export function AdminPanel() {
                   <td className="py-2 pr-3 whitespace-nowrap text-zinc-600">
                     {new Date(row.createdAt).toLocaleString("id-ID")}
                   </td>
+                  <td className="py-2 pr-3 text-xs">{row.productName}</td>
                   <td className="py-2 pr-3 font-mono text-xs">{row.invoiceNumber}</td>
                   <td className="py-2 pr-3 font-mono text-xs">{row.deviceCode}</td>
                   <td className="py-2 pr-3">{row.method}</td>

@@ -5,6 +5,7 @@ import { issueOfflineCodeRequest } from "@/lib/activation/service";
 import { assertAdmin } from "@/lib/auth/admin";
 
 const bodySchema = z.object({
+  appId: z.string().min(1),
   invoiceNumber: z.string().min(1),
   deviceCode: z.string().min(1),
 });
@@ -21,6 +22,7 @@ export async function POST(request: NextRequest) {
     }
 
     const eligibility = await issueOfflineCodeRequest(
+      parsed.data.appId,
       parsed.data.invoiceNumber,
       parsed.data.deviceCode,
     );
@@ -32,12 +34,14 @@ export async function POST(request: NextRequest) {
     }
 
     const activationCode = await signOfflineActivationCode(
+      eligibility.productId,
       eligibility.invoiceNumber,
       eligibility.deviceCode,
     );
 
     return Response.json({
       ok: true,
+      appId: eligibility.productId,
       activationCode,
       invoiceNumber: eligibility.invoiceNumber,
       deviceCode: eligibility.deviceCode,
