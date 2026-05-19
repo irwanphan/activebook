@@ -14,6 +14,7 @@ type InvoiceProduct = {
   maxDevices: number;
   activationCount: number;
   distinctDeviceCount: number;
+  deviceCodes: string[];
 };
 
 type PermittedInvoice = {
@@ -480,6 +481,22 @@ export function AdminPanel() {
                             Terpakai: {p.activationCount} aktivasi sukses · {p.distinctDeviceCount}{" "}
                             perangkat
                           </span>
+                          {p.deviceCodes.length > 0 ? (
+                            <ul className="mt-1 space-y-0.5 pl-2">
+                              {p.deviceCodes.map((deviceCode) => (
+                                <li
+                                  key={deviceCode}
+                                  className="break-all font-mono text-[11px] text-zinc-500"
+                                >
+                                  {deviceCode}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <span className="mt-0.5 block text-[11px] text-zinc-400">
+                              Belum ada perangkat
+                            </span>
+                          )}
                         </li>
                       ))}
                     </ul>
