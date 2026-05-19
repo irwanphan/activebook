@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Card } from "@/components/ui/Card";
+import { Modal } from "@/components/ui/Modal";
 
 type Product = { id: string; code: string; name: string };
 
@@ -58,6 +59,8 @@ export function AdminPanel() {
   const [offlineInvoice, setOfflineInvoice] = useState("");
   const [offlineDevice, setOfflineDevice] = useState("");
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [addInvoiceModalOpen, setAddInvoiceModalOpen] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const headers = useCallback(
     () => ({ "Content-Type": "application/json", "x-admin-key": storedKey ?? "" }),
@@ -112,10 +115,29 @@ export function AdminPanel() {
     setSelectedProducts((prev) => ({ ...prev, [productId]: !prev[productId] }));
   }
 
+  function resetAddInvoiceForm() {
+    setNewInvoice("");
+    setSelectedProducts({ "easybook-erp": true, "easybook-crm": false });
+    setMaxPerDevice(1);
+    setMaxDevices(1);
+    setModalError(null);
+  }
+
+  function openAddInvoiceModal() {
+    resetAddInvoiceForm();
+    setAddInvoiceModalOpen(true);
+  }
+
+  function closeAddInvoiceModal() {
+    setAddInvoiceModalOpen(false);
+    setModalError(null);
+  }
+
   async function handleAddInvoice(e: FormEvent) {
     e.preventDefault();
     setMessage(null);
     setError(null);
+    setModalError(null);
 
     const productLines = Object.entries(selectedProducts)
       .filter(([, on]) => on)
@@ -126,7 +148,7 @@ export function AdminPanel() {
       }));
 
     if (productLines.length === 0) {
-      setError("Pilih minimal satu produk.");
+      setModalError("Pilih minimal satu produk.");
       return;
     }
 
@@ -140,10 +162,10 @@ export function AdminPanel() {
     });
     const json = (await res.json()) as { error?: string };
     if (!res.ok) {
-      setError(json.error ?? "Gagal menambah invoice.");
+      setModalError(json.error ?? "Gagal menambah invoice.");
       return;
     }
-    setNewInvoice("");
+    closeAddInvoiceModal();
     setMessage("Invoice permitted berhasil ditambahkan.");
     await loadData();
   }
@@ -214,7 +236,7 @@ export function AdminPanel() {
         </div>
         <button
           type="button"
-          className="text-sm text-zinc-500 underline"
+          className="text-sm text-zinc-500 underline cursor-pointer"
           onClick={() => {
             window.sessionStorage.removeItem("activebook_admin_key");
             setStoredKey(null);
@@ -247,67 +269,7 @@ export function AdminPanel() {
         <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{message}</p>
       )}
 
-      <div className="grid gap-8 lg:grid-cols-2">
-        <Card>
-          <h2 className="font-semibold text-zinc-900">Tambah permitted invoice</h2>
-          <form onSubmit={handleAddInvoice} className="mt-4 space-y-3">
-            <div>
-              <label className="text-sm font-medium">Nomor invoice</label>
-              <input
-                className={inputClass}
-                value={newInvoice}
-                onChange={(e) => setNewInvoice(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <p className="text-sm font-medium">Produk yang diizinkan</p>
-              <div className="mt-2 space-y-2">
-                {products.map((p) => (
-                  <label key={p.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={selectedProducts[p.id] ?? false}
-                      onChange={() => toggleProduct(p.id)}
-                    />
-                    {p.name}
-                    <span className="font-mono text-xs text-zinc-400">({p.id})</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium">Max / perangkat</label>
-                <input
-                  type="number"
-                  min={1}
-                  className={inputClass}
-                  value={maxPerDevice}
-                  onChange={(e) => setMaxPerDevice(Number(e.target.value))}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Max perangkat beda</label>
-                <input
-                  type="number"
-                  min={1}
-                  className={inputClass}
-                  value={maxDevices}
-                  onChange={(e) => setMaxDevices(Number(e.target.value))}
-                />
-              </div>
-            </div>
-            <button
-              type="submit"
-              className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white"
-            >
-              Simpan
-            </button>
-          </form>
-        </Card>
-
-        <Card>
+      <Card className="max-w-xl">
           <h2 className="font-semibold text-zinc-900">Generate kode offline</h2>
           <form onSubmit={handleGenerateOffline} className="mt-4 space-y-3">
             <div>
@@ -356,11 +318,19 @@ export function AdminPanel() {
               <p className="mt-1 break-all font-mono text-sm text-zinc-900">{generatedCode}</p>
             </div>
           )}
-        </Card>
-      </div>
+      </Card>
 
       <Card>
-        <h2 className="font-semibold text-zinc-900">Daftar permitted invoice</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-semibold text-zinc-900">Daftar permitted invoice</h2>
+          <button
+            type="button"
+            onClick={openAddInvoiceModal}
+            className="cursor-pointer rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
+          >
+            Tambah permitted invoice
+          </button>
+        </div>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
@@ -394,6 +364,85 @@ export function AdminPanel() {
           </table>
         </div>
       </Card>
+
+      <Modal
+        open={addInvoiceModalOpen}
+        title="Tambah permitted invoice"
+        onClose={closeAddInvoiceModal}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeAddInvoiceModal}
+              className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              form="add-permitted-invoice-form"
+              className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
+            >
+              Simpan
+            </button>
+          </div>
+        }
+      >
+        <form id="add-permitted-invoice-form" onSubmit={handleAddInvoice} className="space-y-4">
+          {modalError ? (
+            <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{modalError}</p>
+          ) : null}
+          <div>
+            <label className="text-sm font-medium text-zinc-700">Nomor invoice</label>
+            <input
+              className={inputClass}
+              value={newInvoice}
+              onChange={(e) => setNewInvoice(e.target.value)}
+              placeholder="INV-2026-001"
+              required
+              autoFocus
+            />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-zinc-700">Produk yang diizinkan</p>
+            <div className="mt-2 space-y-2">
+              {products.map((p) => (
+                <label key={p.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selectedProducts[p.id] ?? false}
+                    onChange={() => toggleProduct(p.id)}
+                  />
+                  {p.name}
+                  <span className="font-mono text-xs text-zinc-400">({p.id})</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium text-zinc-700">Max / perangkat</label>
+              <input
+                type="number"
+                min={1}
+                className={inputClass}
+                value={maxPerDevice}
+                onChange={(e) => setMaxPerDevice(Number(e.target.value))}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-zinc-700">Max perangkat beda</label>
+              <input
+                type="number"
+                min={1}
+                className={inputClass}
+                value={maxDevices}
+                onChange={(e) => setMaxDevices(Number(e.target.value))}
+              />
+            </div>
+          </div>
+        </form>
+      </Modal>
 
       <Card>
         <h2 className="font-semibold text-zinc-900">Histori aktivasi</h2>
