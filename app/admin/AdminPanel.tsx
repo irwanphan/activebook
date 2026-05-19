@@ -37,9 +37,14 @@ type HistoryRow = {
 const inputClass =
   "mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
 
+function readStoredAdminKey(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem("activebook_admin_key");
+}
+
 export function AdminPanel() {
   const [adminKey, setAdminKey] = useState("");
-  const [storedKey, setStoredKey] = useState<string | null>(null);
+  const [storedKey, setStoredKey] = useState<string | null>(readStoredAdminKey);
   const [products, setProducts] = useState<Product[]>([]);
   const [filterAppId, setFilterAppId] = useState<string>("");
   const [invoices, setInvoices] = useState<PermittedInvoice[]>([]);
@@ -71,17 +76,8 @@ export function AdminPanel() {
     [storedKey],
   );
 
-  const loadProducts = useCallback(async () => {
-    const res = await fetch("/api/products");
-    if (res.ok) {
-      const json = (await res.json()) as { items: Product[] };
-      setProducts(json.items);
-    }
-  }, []);
-
   const loadInvoices = useCallback(async () => {
     if (!storedKey) return false;
-    setError(null);
     const q = filterAppId ? `?appId=${encodeURIComponent(filterAppId)}` : "";
     const res = await fetch(`/api/admin/permitted-invoices${q}`, { headers: headers() });
     if (!res.ok) {
@@ -90,6 +86,7 @@ export function AdminPanel() {
     }
     const json = (await res.json()) as { items: PermittedInvoice[] };
     setInvoices(json.items);
+    setError(null);
     return true;
   }, [storedKey, headers, filterAppId]);
 
@@ -110,19 +107,42 @@ export function AdminPanel() {
   }, [loadInvoices, loadHistory]);
 
   useEffect(() => {
-    const saved = window.sessionStorage.getItem("activebook_admin_key");
-    if (saved) setStoredKey(saved);
-    void loadProducts();
-  }, [loadProducts]);
+    let cancelled = false;
+    fetch("/api/products")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json: { items: Product[] } | null) => {
+        if (!cancelled && json) setProducts(json.items);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
-    if (storedKey) void loadInvoices();
-  }, [storedKey, loadInvoices]);
+    if (!storedKey) return;
+    let cancelled = false;
+    const q = filterAppId ? `?appId=${encodeURIComponent(filterAppId)}` : "";
+    fetch(`/api/admin/permitted-invoices${q}`, { headers: headers() })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("fetch failed"))))
+      .then((json: { items: PermittedInvoice[] }) => {
+        if (!cancelled) {
+          setInvoices(json.items);
+          setError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError("Gagal memuat data. Periksa kunci admin.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [storedKey, filterAppId, headers]);
 
   function handleLogin(e: FormEvent) {
     e.preventDefault();
-    window.sessionStorage.setItem("activebook_admin_key", adminKey.trim());
-    setStoredKey(adminKey.trim());
+    const key = adminKey.trim();
+    window.sessionStorage.setItem("activebook_admin_key", key);
+    setStoredKey(key);
   }
 
   function toggleProduct(productId: string) {
