@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { v4 as uuid } from "uuid";
 import { z } from "zod";
@@ -108,6 +108,7 @@ const patchSchema = z.object({
   invoiceNumber: z.string().min(1),
   active: z.boolean().optional(),
   notes: z.string().optional(),
+  products: z.array(productLineSchema).min(1).optional(),
 });
 
 export async function PATCH(request: NextRequest) {
@@ -122,14 +123,62 @@ export async function PATCH(request: NextRequest) {
 
   const invoiceNumber = normalizeInvoice(parsed.data.invoiceNumber);
   const db = await getDb();
+
+  const [invoice] = await db
+    .select()
+    .from(permittedInvoices)
+    .where(eq(permittedInvoices.invoiceNumber, invoiceNumber))
+    .limit(1);
+
+  if (!invoice) {
+    return Response.json({ error: "Invoice tidak ditemukan." }, { status: 404 });
+  }
+
   const patch: Partial<typeof permittedInvoices.$inferInsert> = {};
   if (parsed.data.active !== undefined) patch.active = parsed.data.active ? 1 : 0;
   if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
 
-  await db
-    .update(permittedInvoices)
-    .set(patch)
-    .where(eq(permittedInvoices.invoiceNumber, invoiceNumber));
+  if (Object.keys(patch).length > 0) {
+    await db.update(permittedInvoices).set(patch).where(eq(permittedInvoices.id, invoice.id));
+  }
+
+  if (parsed.data.products) {
+    for (const line of parsed.data.products) {
+      const productId = normalizeProductId(line.productId);
+      if (!productId) {
+        return Response.json({ error: `Produk tidak valid: ${line.productId}` }, { status: 400 });
+      }
+
+      const [existing] = await db
+        .select()
+        .from(permittedInvoiceProducts)
+        .where(
+          and(
+            eq(permittedInvoiceProducts.invoiceId, invoice.id),
+            eq(permittedInvoiceProducts.productId, productId),
+          ),
+        )
+        .limit(1);
+
+      if (existing) {
+        await db
+          .update(permittedInvoiceProducts)
+          .set({
+            maxActivationsPerDevice: line.maxActivationsPerDevice,
+            maxDevices: line.maxDevices,
+          })
+          .where(eq(permittedInvoiceProducts.id, existing.id));
+      } else {
+        await db.insert(permittedInvoiceProducts).values({
+          id: uuid(),
+          invoiceId: invoice.id,
+          productId,
+          maxActivationsPerDevice: line.maxActivationsPerDevice,
+          maxDevices: line.maxDevices,
+        });
+      }
+    }
+  }
 
   return Response.json({ ok: true });
 }

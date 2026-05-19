@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Card } from "@/components/ui/Card";
 import { Modal } from "@/components/ui/Modal";
+import { setAdminSession, useAdminSession } from "@/lib/auth/admin-session";
 
 type Product = { id: string; code: string; name: string };
 
@@ -22,6 +23,11 @@ type PermittedInvoice = {
   products: InvoiceProduct[];
 };
 
+type ProductLimits = {
+  maxActivationsPerDevice: number;
+  maxDevices: number;
+};
+
 type HistoryRow = {
   id: string;
   productId: string;
@@ -37,14 +43,9 @@ type HistoryRow = {
 const inputClass =
   "mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
 
-function readStoredAdminKey(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.sessionStorage.getItem("activebook_admin_key");
-}
-
 export function AdminPanel() {
+  const storedKey = useAdminSession();
   const [adminKey, setAdminKey] = useState("");
-  const [storedKey, setStoredKey] = useState<string | null>(readStoredAdminKey);
   const [products, setProducts] = useState<Product[]>([]);
   const [filterAppId, setFilterAppId] = useState<string>("");
   const [invoices, setInvoices] = useState<PermittedInvoice[]>([]);
@@ -70,6 +71,13 @@ export function AdminPanel() {
   const [offlineModalError, setOfflineModalError] = useState<string | null>(null);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [editInvoiceModalOpen, setEditInvoiceModalOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<PermittedInvoice | null>(null);
+  const [editLines, setEditLines] = useState<Record<string, ProductLimits>>({});
+  const [editNewProducts, setEditNewProducts] = useState<Record<string, boolean>>({});
+  const [editNewMaxPerDevice, setEditNewMaxPerDevice] = useState(1);
+  const [editNewMaxDevices, setEditNewMaxDevices] = useState(1);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
 
   const headers = useCallback(
     () => ({ "Content-Type": "application/json", "x-admin-key": storedKey ?? "" }),
@@ -140,9 +148,7 @@ export function AdminPanel() {
 
   function handleLogin(e: FormEvent) {
     e.preventDefault();
-    const key = adminKey.trim();
-    window.sessionStorage.setItem("activebook_admin_key", key);
-    setStoredKey(key);
+    setAdminSession(adminKey.trim());
   }
 
   function toggleProduct(productId: string) {
@@ -165,6 +171,91 @@ export function AdminPanel() {
   function closeAddInvoiceModal() {
     setAddInvoiceModalOpen(false);
     setModalError(null);
+  }
+
+  function openEditInvoiceModal(invoice: PermittedInvoice) {
+    const lines: Record<string, ProductLimits> = {};
+    for (const p of invoice.products) {
+      lines[p.productId] = {
+        maxActivationsPerDevice: p.maxActivationsPerDevice,
+        maxDevices: p.maxDevices,
+      };
+    }
+    const newProducts: Record<string, boolean> = {};
+    for (const p of products) {
+      if (!invoice.products.some((ip) => ip.productId === p.id)) {
+        newProducts[p.id] = false;
+      }
+    }
+    setEditingInvoice(invoice);
+    setEditLines(lines);
+    setEditNewProducts(newProducts);
+    setEditNewMaxPerDevice(1);
+    setEditNewMaxDevices(1);
+    setEditModalError(null);
+    setEditInvoiceModalOpen(true);
+  }
+
+  function closeEditInvoiceModal() {
+    setEditInvoiceModalOpen(false);
+    setEditingInvoice(null);
+    setEditModalError(null);
+  }
+
+  function updateEditLine(productId: string, field: keyof ProductLimits, value: number) {
+    setEditLines((prev) => ({
+      ...prev,
+      [productId]: { ...prev[productId], [field]: value },
+    }));
+  }
+
+  function toggleEditNewProduct(productId: string) {
+    setEditNewProducts((prev) => ({ ...prev, [productId]: !prev[productId] }));
+  }
+
+  async function handleEditInvoiceProducts(e: FormEvent) {
+    e.preventDefault();
+    if (!editingInvoice) return;
+    setMessage(null);
+    setError(null);
+    setEditModalError(null);
+
+    const existingLines = Object.entries(editLines).map(([productId, limits]) => ({
+      productId,
+      maxActivationsPerDevice: limits.maxActivationsPerDevice,
+      maxDevices: limits.maxDevices,
+    }));
+
+    const addedLines = Object.entries(editNewProducts)
+      .filter(([, on]) => on)
+      .map(([productId]) => ({
+        productId,
+        maxActivationsPerDevice: editNewMaxPerDevice,
+        maxDevices: editNewMaxDevices,
+      }));
+
+    const productLines = [...existingLines, ...addedLines];
+    if (productLines.length === 0) {
+      setEditModalError("Invoice harus memiliki minimal satu produk.");
+      return;
+    }
+
+    const res = await fetch("/api/admin/permitted-invoices", {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({
+        invoiceNumber: editingInvoice.invoiceNumber,
+        products: productLines,
+      }),
+    });
+    const json = (await res.json()) as { error?: string };
+    if (!res.ok) {
+      setEditModalError(json.error ?? "Gagal menyimpan perubahan.");
+      return;
+    }
+    closeEditInvoiceModal();
+    setMessage(`Limit aktivasi untuk ${editingInvoice.invoiceNumber} berhasil diperbarui.`);
+    await loadInvoices();
   }
 
   async function handleAddInvoice(e: FormEvent) {
@@ -302,10 +393,7 @@ export function AdminPanel() {
         <button
           type="button"
           className="text-sm text-zinc-500 underline cursor-pointer"
-          onClick={() => {
-            window.sessionStorage.removeItem("activebook_admin_key");
-            setStoredKey(null);
-          }}
+          onClick={() => setAdminSession(null)}
         >
           Keluar
         </button>
@@ -369,7 +457,8 @@ export function AdminPanel() {
               <tr className="border-b text-zinc-500">
                 <th className="py-2 pr-4">Invoice</th>
                 <th className="py-2 pr-4">Produk</th>
-                <th className="py-2">Aktif</th>
+                <th className="py-2 pr-4">Aktif</th>
+                <th className="py-2">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -389,13 +478,161 @@ export function AdminPanel() {
                       ))}
                     </ul>
                   </td>
-                  <td className="py-2">{row.active ? "Ya" : "Tidak"}</td>
+                  <td className="py-2 pr-4">{row.active ? "Ya" : "Tidak"}</td>
+                  <td className="py-2">
+                    <button
+                      type="button"
+                      onClick={() => openEditInvoiceModal(row)}
+                      className="cursor-pointer text-xs font-medium text-zinc-600 underline hover:text-zinc-900"
+                    >
+                      Kelola limit
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </Card>
+
+      <Modal
+        open={editInvoiceModalOpen}
+        title="Kelola limit aktivasi"
+        onClose={closeEditInvoiceModal}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeEditInvoiceModal}
+              className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              form="edit-invoice-products-form"
+              className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
+            >
+              Simpan
+            </button>
+          </div>
+        }
+      >
+        <form id="edit-invoice-products-form" onSubmit={handleEditInvoiceProducts} className="space-y-5">
+          {editModalError ? (
+            <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{editModalError}</p>
+          ) : null}
+          {editingInvoice ? (
+            <p className="text-sm text-zinc-600">
+              Invoice:{" "}
+              <span className="font-mono font-medium text-zinc-900">{editingInvoice.invoiceNumber}</span>
+            </p>
+          ) : null}
+
+          {Object.keys(editLines).length > 0 ? (
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-zinc-700">Produk terdaftar</p>
+              {Object.entries(editLines).map(([productId, limits]) => {
+                const productName =
+                  editingInvoice?.products.find((p) => p.productId === productId)?.productName ??
+                  products.find((p) => p.id === productId)?.name ??
+                  productId;
+                return (
+                  <div
+                    key={productId}
+                    className="rounded-xl border border-zinc-100 bg-zinc-50/80 p-3 space-y-2"
+                  >
+                    <p className="text-sm font-medium text-zinc-900">
+                      {productName}
+                      <span className="ml-1 font-mono text-xs font-normal text-zinc-400">
+                        ({productId})
+                      </span>
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs font-medium text-zinc-600">Max / perangkat</label>
+                        <input
+                          type="number"
+                          min={1}
+                          className={inputClass}
+                          value={limits.maxActivationsPerDevice}
+                          onChange={(e) =>
+                            updateEditLine(
+                              productId,
+                              "maxActivationsPerDevice",
+                              Number(e.target.value),
+                            )
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-zinc-600">Max perangkat beda</label>
+                        <input
+                          type="number"
+                          min={1}
+                          className={inputClass}
+                          value={limits.maxDevices}
+                          onChange={(e) =>
+                            updateEditLine(productId, "maxDevices", Number(e.target.value))
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {Object.keys(editNewProducts).length > 0 ? (
+            <div className="space-y-3 border-t border-zinc-100 pt-4">
+              <p className="text-sm font-medium text-zinc-700">Tambah produk</p>
+              <div className="space-y-2">
+                {Object.keys(editNewProducts).map((productId) => {
+                  const product = products.find((p) => p.id === productId);
+                  return (
+                    <label key={productId} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={editNewProducts[productId] ?? false}
+                        onChange={() => toggleEditNewProduct(productId)}
+                      />
+                      {product?.name ?? productId}
+                      <span className="font-mono text-xs text-zinc-400">({productId})</span>
+                    </label>
+                  );
+                })}
+              </div>
+              {Object.values(editNewProducts).some(Boolean) ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-zinc-600">Max / perangkat (produk baru)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      className={inputClass}
+                      value={editNewMaxPerDevice}
+                      onChange={(e) => setEditNewMaxPerDevice(Number(e.target.value))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-zinc-600">
+                      Max perangkat beda (produk baru)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      className={inputClass}
+                      value={editNewMaxDevices}
+                      onChange={(e) => setEditNewMaxDevices(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </form>
+      </Modal>
 
       <Modal
         open={addInvoiceModalOpen}
