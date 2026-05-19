@@ -63,6 +63,8 @@ export function AdminPanel() {
   const [modalError, setModalError] = useState<string | null>(null);
   const [offlineModalOpen, setOfflineModalOpen] = useState(false);
   const [offlineModalError, setOfflineModalError] = useState<string | null>(null);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const headers = useCallback(
     () => ({ "Content-Type": "application/json", "x-admin-key": storedKey ?? "" }),
@@ -77,25 +79,35 @@ export function AdminPanel() {
     }
   }, []);
 
-  const loadData = useCallback(async () => {
-    if (!storedKey) return;
+  const loadInvoices = useCallback(async () => {
+    if (!storedKey) return false;
     setError(null);
     const q = filterAppId ? `?appId=${encodeURIComponent(filterAppId)}` : "";
-    const [invRes, histRes] = await Promise.all([
-      fetch(`/api/admin/permitted-invoices${q}`, { headers: headers() }),
-      fetch(`/api/admin/activation-history?limit=50${filterAppId ? `&appId=${filterAppId}` : ""}`, {
-        headers: headers(),
-      }),
-    ]);
-    if (!invRes.ok || !histRes.ok) {
+    const res = await fetch(`/api/admin/permitted-invoices${q}`, { headers: headers() });
+    if (!res.ok) {
       setError("Gagal memuat data. Periksa kunci admin.");
-      return;
+      return false;
     }
-    const invJson = (await invRes.json()) as { items: PermittedInvoice[] };
-    const histJson = (await histRes.json()) as { items: HistoryRow[] };
-    setInvoices(invJson.items);
-    setHistory(histJson.items);
+    const json = (await res.json()) as { items: PermittedInvoice[] };
+    setInvoices(json.items);
+    return true;
   }, [storedKey, headers, filterAppId]);
+
+  const loadHistory = useCallback(async () => {
+    if (!storedKey) return false;
+    const res = await fetch(
+      `/api/admin/activation-history?limit=50${filterAppId ? `&appId=${filterAppId}` : ""}`,
+      { headers: headers() },
+    );
+    if (!res.ok) return false;
+    const json = (await res.json()) as { items: HistoryRow[] };
+    setHistory(json.items);
+    return true;
+  }, [storedKey, headers, filterAppId]);
+
+  const loadData = useCallback(async () => {
+    await Promise.all([loadInvoices(), loadHistory()]);
+  }, [loadInvoices, loadHistory]);
 
   useEffect(() => {
     const saved = window.sessionStorage.getItem("activebook_admin_key");
@@ -104,8 +116,8 @@ export function AdminPanel() {
   }, [loadProducts]);
 
   useEffect(() => {
-    if (storedKey) void loadData();
-  }, [storedKey, loadData]);
+    if (storedKey) void loadInvoices();
+  }, [storedKey, loadInvoices]);
 
   function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -188,6 +200,18 @@ export function AdminPanel() {
   function closeOfflineModal() {
     setOfflineModalOpen(false);
     setOfflineModalError(null);
+  }
+
+  async function openHistoryModal() {
+    setHistoryModalOpen(true);
+    setHistoryLoading(true);
+    const ok = await loadHistory();
+    setHistoryLoading(false);
+    if (!ok) setError("Gagal memuat histori aktivasi.");
+  }
+
+  function closeHistoryModal() {
+    setHistoryModalOpen(false);
   }
 
   async function handleGenerateOffline(e: FormEvent) {
@@ -298,6 +322,13 @@ export function AdminPanel() {
             className="cursor-pointer rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
           >
             Generate kode offline
+          </button>
+          <button
+            type="button"
+            onClick={() => void openHistoryModal()}
+            className="cursor-pointer rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+          >
+            Histori aktivasi
           </button>
         </div>
       </div>
@@ -497,39 +528,58 @@ export function AdminPanel() {
         </form>
       </Modal>
 
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-semibold text-zinc-900">Histori aktivasi</h2>
-        </div>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b text-zinc-500">
-                <th className="py-2 pr-3">Waktu</th>
-                <th className="py-2 pr-3">Produk</th>
-                <th className="py-2 pr-3">Invoice</th>
-                <th className="py-2 pr-3">Device</th>
-                <th className="py-2 pr-3">Metode</th>
-                <th className="py-2">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((row) => (
-                <tr key={row.id} className="border-b border-zinc-100">
-                  <td className="py-2 pr-3 whitespace-nowrap text-zinc-600">
-                    {new Date(row.createdAt).toLocaleString("id-ID")}
-                  </td>
-                  <td className="py-2 pr-3 text-xs">{row.productName}</td>
-                  <td className="py-2 pr-3 font-mono text-xs">{row.invoiceNumber}</td>
-                  <td className="py-2 pr-3 font-mono text-xs">{row.deviceCode}</td>
-                  <td className="py-2 pr-3">{row.method}</td>
-                  <td className="py-2">{row.status}</td>
+      <Modal
+        open={historyModalOpen}
+        title="Histori aktivasi"
+        onClose={closeHistoryModal}
+        panelClassName="max-w-5xl"
+        footer={
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={closeHistoryModal}
+              className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              Tutup
+            </button>
+          </div>
+        }
+      >
+        {historyLoading ? (
+          <p className="py-8 text-center text-sm text-zinc-500">Memuat histori…</p>
+        ) : history.length === 0 ? (
+          <p className="py-8 text-center text-sm text-zinc-500">Belum ada aktivasi tercatat.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b text-zinc-500">
+                  <th className="py-2 pr-3">Waktu</th>
+                  <th className="py-2 pr-3">Produk</th>
+                  <th className="py-2 pr-3">Invoice</th>
+                  <th className="py-2 pr-3">Device</th>
+                  <th className="py-2 pr-3">Metode</th>
+                  <th className="py-2">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+              </thead>
+              <tbody>
+                {history.map((row) => (
+                  <tr key={row.id} className="border-b border-zinc-100">
+                    <td className="py-2 pr-3 whitespace-nowrap text-zinc-600">
+                      {new Date(row.createdAt).toLocaleString("id-ID")}
+                    </td>
+                    <td className="py-2 pr-3 text-xs">{row.productName}</td>
+                    <td className="py-2 pr-3 font-mono text-xs">{row.invoiceNumber}</td>
+                    <td className="py-2 pr-3 font-mono text-xs">{row.deviceCode}</td>
+                    <td className="py-2 pr-3">{row.method}</td>
+                    <td className="py-2">{row.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
