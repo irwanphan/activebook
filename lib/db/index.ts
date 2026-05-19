@@ -26,9 +26,17 @@ async function columnExists(sql: Client, table: string, column: string): Promise
   });
 }
 
+async function tableExists(sql: Client, table: string): Promise<boolean> {
+  const rs = await sql.execute(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name = '${table}'`,
+  );
+  return rs.rows.length > 0;
+}
+
 async function ensureMigrated(sql: Client) {
   if (migrated) return;
 
+  // 1. Tabel dasar (tanpa index yang butuh kolom product_id — tabel lama belum punya kolom itu)
   await sql.batch([
     `CREATE TABLE IF NOT EXISTS products (
       id TEXT PRIMARY KEY NOT NULL,
@@ -75,12 +83,36 @@ async function ensureMigrated(sql: Client) {
     )`,
     `INSERT OR IGNORE INTO products (id, code, name, active) VALUES ('easybook-erp', 'easybook-erp', 'EasyBook ERP', 1)`,
     `INSERT OR IGNORE INTO products (id, code, name, active) VALUES ('easybook-crm', 'easybook-crm', 'EasyBook CRM', 1)`,
-    `CREATE INDEX IF NOT EXISTS idx_activation_history_invoice ON activation_history(invoice_number)`,
-    `CREATE INDEX IF NOT EXISTS idx_activation_history_product ON activation_history(product_id)`,
-    `CREATE INDEX IF NOT EXISTS idx_activation_history_device ON activation_history(device_code)`,
   ]);
 
-  // Legacy schema: permitted_invoices had limits on header row
+  // 2. Upgrade tabel lama (dibuat sebelum multi-produk)
+  if (await tableExists(sql, "activation_history")) {
+    if (!(await columnExists(sql, "activation_history", "product_id"))) {
+      await sql.execute(
+        `ALTER TABLE activation_history ADD COLUMN product_id TEXT NOT NULL DEFAULT 'easybook-erp'`,
+      );
+    }
+  }
+  if (await tableExists(sql, "activation_requests")) {
+    if (!(await columnExists(sql, "activation_requests", "product_id"))) {
+      await sql.execute(
+        `ALTER TABLE activation_requests ADD COLUMN product_id TEXT NOT NULL DEFAULT 'easybook-erp'`,
+      );
+    }
+  }
+
+  // 3. Backfill & migrasi invoice lama
+  if (await tableExists(sql, "activation_history")) {
+    await sql.execute(
+      `UPDATE activation_history SET product_id = 'easybook-erp' WHERE product_id IS NULL OR product_id = ''`,
+    );
+  }
+  if (await tableExists(sql, "activation_requests")) {
+    await sql.execute(
+      `UPDATE activation_requests SET product_id = 'easybook-erp' WHERE product_id IS NULL OR product_id = ''`,
+    );
+  }
+
   const hasLegacyLimits = await columnExists(sql, "permitted_invoices", "max_activations_per_device");
   if (hasLegacyLimits) {
     await sql.execute(`
@@ -98,23 +130,12 @@ async function ensureMigrated(sql: Client) {
     `);
   }
 
-  if (!(await columnExists(sql, "activation_history", "product_id"))) {
-    await sql.execute(
-      `ALTER TABLE activation_history ADD COLUMN product_id TEXT NOT NULL DEFAULT 'easybook-erp'`,
-    );
-  }
-  if (!(await columnExists(sql, "activation_requests", "product_id"))) {
-    await sql.execute(
-      `ALTER TABLE activation_requests ADD COLUMN product_id TEXT NOT NULL DEFAULT 'easybook-erp'`,
-    );
-  }
-
-  await sql.execute(
-    `UPDATE activation_history SET product_id = 'easybook-erp' WHERE product_id IS NULL OR product_id = ''`,
-  );
-  await sql.execute(
-    `UPDATE activation_requests SET product_id = 'easybook-erp' WHERE product_id IS NULL OR product_id = ''`,
-  );
+  // 4. Index (setelah kolom product_id pasti ada)
+  await sql.batch([
+    `CREATE INDEX IF NOT EXISTS idx_activation_history_invoice ON activation_history(invoice_number)`,
+    `CREATE INDEX IF NOT EXISTS idx_activation_history_product ON activation_history(product_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_activation_history_device ON activation_history(device_code)`,
+  ]);
 
   migrated = true;
 }
