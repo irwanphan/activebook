@@ -1,11 +1,11 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { v4 as uuid } from "uuid";
 import { z } from "zod";
 import { normalizeInvoice } from "@/lib/activation/normalize";
 import { assertAdmin } from "@/lib/auth/admin";
 import { getDb } from "@/lib/db";
-import { permittedInvoiceProducts, permittedInvoices } from "@/lib/db/schema";
+import { activationHistory, permittedInvoiceProducts, permittedInvoices } from "@/lib/db/schema";
 import { getProductName, normalizeProductId } from "@/lib/products";
 
 export async function GET(request: NextRequest) {
@@ -22,15 +22,47 @@ export async function GET(request: NextRequest) {
 
   const products = await db.select().from(permittedInvoiceProducts);
 
+  const usageRows = await db
+    .select({
+      invoiceNumber: activationHistory.invoiceNumber,
+      productId: activationHistory.productId,
+      activationCount: sql<number>`count(*)`,
+      distinctDeviceCount: sql<number>`count(distinct ${activationHistory.deviceCode})`,
+    })
+    .from(activationHistory)
+    .where(
+      and(
+        eq(activationHistory.status, "success"),
+        inArray(activationHistory.method, ["online", "offline"]),
+      ),
+    )
+    .groupBy(activationHistory.invoiceNumber, activationHistory.productId);
+
+  const usageByKey = new Map<
+    string,
+    { activationCount: number; distinctDeviceCount: number }
+  >();
+  for (const row of usageRows) {
+    usageByKey.set(`${row.invoiceNumber}:${row.productId}`, {
+      activationCount: Number(row.activationCount ?? 0),
+      distinctDeviceCount: Number(row.distinctDeviceCount ?? 0),
+    });
+  }
+
   const items = invoices.map((inv) => {
     const invProducts = products
       .filter((p) => p.invoiceId === inv.id)
-      .map((p) => ({
-        productId: p.productId,
-        productName: getProductName(p.productId),
-        maxActivationsPerDevice: p.maxActivationsPerDevice,
-        maxDevices: p.maxDevices,
-      }));
+      .map((p) => {
+        const usage = usageByKey.get(`${inv.invoiceNumber}:${p.productId}`);
+        return {
+          productId: p.productId,
+          productName: getProductName(p.productId),
+          maxActivationsPerDevice: p.maxActivationsPerDevice,
+          maxDevices: p.maxDevices,
+          activationCount: usage?.activationCount ?? 0,
+          distinctDeviceCount: usage?.distinctDeviceCount ?? 0,
+        };
+      });
     return {
       ...inv,
       products: invProducts,

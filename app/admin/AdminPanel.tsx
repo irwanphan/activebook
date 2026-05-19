@@ -12,6 +12,8 @@ type InvoiceProduct = {
   productName: string;
   maxActivationsPerDevice: number;
   maxDevices: number;
+  activationCount: number;
+  distinctDeviceCount: number;
 };
 
 type PermittedInvoice = {
@@ -473,6 +475,10 @@ export function AdminPanel() {
                           <span className="text-zinc-500">
                             {" "}
                             — {p.maxActivationsPerDevice}/device, {p.maxDevices} devices
+                          </span>
+                          <span className="mt-0.5 block text-zinc-600">
+                            Terpakai: {p.activationCount} aktivasi sukses · {p.distinctDeviceCount}{" "}
+                            perangkat
                           </span>
                         </li>
                       ))}
