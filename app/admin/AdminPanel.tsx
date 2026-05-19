@@ -61,6 +61,8 @@ export function AdminPanel() {
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [addInvoiceModalOpen, setAddInvoiceModalOpen] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [offlineModalOpen, setOfflineModalOpen] = useState(false);
+  const [offlineModalError, setOfflineModalError] = useState<string | null>(null);
 
   const headers = useCallback(
     () => ({ "Content-Type": "application/json", "x-admin-key": storedKey ?? "" }),
@@ -170,10 +172,29 @@ export function AdminPanel() {
     await loadData();
   }
 
+  function resetOfflineForm() {
+    setOfflineAppId(filterAppId || "easybook-erp");
+    setOfflineInvoice("");
+    setOfflineDevice("");
+    setGeneratedCode(null);
+    setOfflineModalError(null);
+  }
+
+  function openOfflineModal() {
+    resetOfflineForm();
+    setOfflineModalOpen(true);
+  }
+
+  function closeOfflineModal() {
+    setOfflineModalOpen(false);
+    setOfflineModalError(null);
+  }
+
   async function handleGenerateOffline(e: FormEvent) {
     e.preventDefault();
-    setGeneratedCode(null);
+    setMessage(null);
     setError(null);
+    setOfflineModalError(null);
     const res = await fetch("/api/admin/offline-code", {
       method: "POST",
       headers: headers(),
@@ -191,7 +212,7 @@ export function AdminPanel() {
       error?: string;
     };
     if (!res.ok) {
-      setError(json.message ?? json.error ?? "Gagal membuat kode.");
+      setOfflineModalError(json.message ?? json.error ?? "Gagal membuat kode.");
       return;
     }
     setGeneratedCode(json.activationCode ?? null);
@@ -226,7 +247,7 @@ export function AdminPanel() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-4 py-10">
+    <div className="mx-auto w-full max-w-7xl flex flex-col gap-8 px-4 py-10">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900">EasyBook Activebook</h1>
@@ -246,7 +267,7 @@ export function AdminPanel() {
         </button>
       </header>
 
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-wrap items-end gap-3 w-full justify-between">
         <div>
           <label className="text-sm font-medium text-zinc-700">Filter produk</label>
           <select
@@ -262,67 +283,8 @@ export function AdminPanel() {
             ))}
           </select>
         </div>
-      </div>
 
-      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-      {message && (
-        <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{message}</p>
-      )}
-
-      <Card className="max-w-xl">
-          <h2 className="font-semibold text-zinc-900">Generate kode offline</h2>
-          <form onSubmit={handleGenerateOffline} className="mt-4 space-y-3">
-            <div>
-              <label className="text-sm font-medium">Produk</label>
-              <select
-                className={inputClass}
-                value={offlineAppId}
-                onChange={(e) => setOfflineAppId(e.target.value)}
-                required
-              >
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Invoice</label>
-              <input
-                className={inputClass}
-                value={offlineInvoice}
-                onChange={(e) => setOfflineInvoice(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Kode perangkat</label>
-              <input
-                className={inputClass}
-                value={offlineDevice}
-                onChange={(e) => setOfflineDevice(e.target.value)}
-                required
-              />
-            </div>
-            <button
-              type="submit"
-              className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"
-            >
-              Generate
-            </button>
-          </form>
-          {generatedCode && (
-            <div className="mt-4 rounded-xl bg-zinc-50 p-3">
-              <p className="text-xs font-medium text-zinc-500">Kode aktivasi</p>
-              <p className="mt-1 break-all font-mono text-sm text-zinc-900">{generatedCode}</p>
-            </div>
-          )}
-      </Card>
-
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-semibold text-zinc-900">Daftar permitted invoice</h2>
+        <div className="flex flex-wrap items-end gap-2">
           <button
             type="button"
             onClick={openAddInvoiceModal}
@@ -330,6 +292,25 @@ export function AdminPanel() {
           >
             Tambah permitted invoice
           </button>
+          <button
+            type="button"
+            onClick={openOfflineModal}
+            className="cursor-pointer rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+          >
+            Generate kode offline
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+      {message && (
+        <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{message}</p>
+      )}
+
+
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-semibold text-zinc-900">Daftar permitted invoice</h2>
         </div>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -444,8 +425,82 @@ export function AdminPanel() {
         </form>
       </Modal>
 
+      <Modal
+        open={offlineModalOpen}
+        title="Generate kode offline"
+        onClose={closeOfflineModal}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeOfflineModal}
+              className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              {generatedCode ? "Tutup" : "Batal"}
+            </button>
+            {!generatedCode ? (
+              <button
+                type="submit"
+                form="generate-offline-form"
+                className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+              >
+                Generate
+              </button>
+            ) : null}
+          </div>
+        }
+      >
+        <form id="generate-offline-form" onSubmit={handleGenerateOffline} className="space-y-4">
+          {offlineModalError ? (
+            <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{offlineModalError}</p>
+          ) : null}
+          <div>
+            <label className="text-sm font-medium text-zinc-700">Produk</label>
+            <select
+              className={inputClass}
+              value={offlineAppId}
+              onChange={(e) => setOfflineAppId(e.target.value)}
+              required
+              autoFocus
+            >
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-zinc-700">Invoice</label>
+            <input
+              className={inputClass}
+              value={offlineInvoice}
+              onChange={(e) => setOfflineInvoice(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-zinc-700">Kode perangkat</label>
+            <input
+              className={inputClass}
+              value={offlineDevice}
+              onChange={(e) => setOfflineDevice(e.target.value)}
+              required
+            />
+          </div>
+          {generatedCode ? (
+            <div className="rounded-xl bg-emerald-50 p-3 ring-1 ring-emerald-100">
+              <p className="text-xs font-medium text-emerald-800">Kode aktivasi</p>
+              <p className="mt-1 break-all font-mono text-sm text-emerald-950">{generatedCode}</p>
+            </div>
+          ) : null}
+        </form>
+      </Modal>
+
       <Card>
-        <h2 className="font-semibold text-zinc-900">Histori aktivasi</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-semibold text-zinc-900">Histori aktivasi</h2>
+        </div>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
